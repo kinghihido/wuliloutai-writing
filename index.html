@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>雾里楼台 · 文集</title>
-<meta name="description" content="雾里楼台 · 文集：日记、随感、长文。研墨落笔，藏于本机浏览器。">
+<meta name="description" content="雾里楼台 · 文集：日记、随感、长文。稿件存于仓库 writings/index.json，可本地写作导出提交。">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23eef3ec'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='%23a63d2f' font-family='serif'%3E雾%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -507,7 +507,11 @@
           </div>
           <div id="list"></div>
           <p class="hint" id="statsLine" style="margin-top:16px">共 0 篇 · 0 字</p>
-          <p class="hint" style="margin-top:6px">点题名可展卷细读，或调出续写。稿子存于本机浏览器，换设备不通。</p>
+          <p class="hint" style="margin-top:6px">点题名可展卷细读，或调出续写。稿件存于仓库 <code>writings/index.json</code>，本页写作后请下载并提交。</p>
+          <div class="toolbar" style="margin-top:12px">
+            <button class="btn btn-ghost" id="importOld" type="button">导入浏览器旧稿</button>
+            <span class="hint">把本地浏览器里残留的旧稿一次性并入库</span>
+          </div>
         </section>
       </div>
 
@@ -526,7 +530,7 @@
 </main>
 
 <footer class="foot">
-  <p>雾里楼台 · 静态创作 · 稿件藏于本机浏览器（localStorage: jdc.writings）</p>
+  <p>雾里楼台 · 静态创作 · 稿件存于仓库 writings/index.json（本页可写作并导出提交）</p>
   <p>kinghihido · 2026</p>
 </footer>
 
@@ -833,17 +837,44 @@
   document.getElementById("verseText").textContent =
     VERSES[Math.floor(Math.random() * VERSES.length)];
 
-  /* ---------- 存储 ---------- */
-  var KEY = "jdc.writings";
-  function load() {
+  /* ---------- 存储：仓库文件 writings/index.json 为唯一真源，浏览器仅作本地缓存 ---------- */
+  var KEY = "jdc.writings";            // 旧键：仅用于一次性迁移旧稿
+  var INDEX_URL = "writings/index.json";
+  var items = [];                      // 当前稿件（内存中的真值）
+  var loaded = false;
+
+  function hydrate(src) {
     try {
-      var v = JSON.parse(localStorage.getItem(KEY) || "[]");
+      var v = (typeof src === "string") ? JSON.parse(src || "[]") : src;
       return Array.isArray(v) ? v : [];
     } catch (e) { return []; }
   }
-  function persist(items) {
-    try { localStorage.setItem(KEY, JSON.stringify(items)); return true; }
-    catch (e) { toast("墨池已满，先删去几篇旧稿再存"); return false; }
+  function load() { return items; }
+
+  /* 收墨/改讫/焚稿 后：镜像到本地缓存，并下载最新 writings/index.json 供提交 */
+  function persist() {
+    try { localStorage.setItem(KEY, JSON.stringify(items)); } catch (e) {}
+    var blob = new Blob([JSON.stringify(items, null, 2)], { type: "application/json" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "index.json";
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    toast("已生成 writings/index.json，请下载后提交到仓库");
+  }
+
+  /* 首屏：拉取仓库里的真源；失败则回退到本地缓存镜像 */
+  function fetchIndex() {
+    fetch(INDEX_URL, { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : []; })
+      .then(function (data) {
+        items = hydrate(data); loaded = true;
+        try { localStorage.setItem(KEY, JSON.stringify(items)); } catch (e) {}
+        render();
+      })
+      .catch(function () {
+        items = hydrate(localStorage.getItem(KEY)); loaded = true; render();
+      });
   }
 
   /* ---------- 组件 ---------- */
@@ -984,7 +1015,7 @@
 
   /* ---------- 编辑 / 删除 ---------- */
   function edit(id) {
-    var item = load().filter(function (x) { return x.id === id; })[0];
+    var item = items.filter(function (x) { return x.id === id; })[0];
     if (!item) return;
     editingId = item.id;
     titleEl.value = item.title || "";
@@ -999,8 +1030,8 @@
 
   function remove(id, title) {
     if (!window.confirm("欲焚此稿《" + (title || "无题") + "》，焚后不复可得，确乎？")) return;
-    var items = load().filter(function (x) { return x.id !== id; });
-    if (!persist(items)) return;
+    items = items.filter(function (x) { return x.id !== id; });
+    persist();
     if (editingId === id) resetForm();
     render();
     toast(DEL_WORDS[Math.floor(Math.random() * DEL_WORDS.length)]);
@@ -1027,7 +1058,6 @@
       title = firstLine.trim().slice(0, 18) || "无题";
     }
 
-    var items = load();
     var now = Date.now();
     if (editingId) {
       var hit = false;
@@ -1041,7 +1071,7 @@
       items.push({ id: String(now), title: title, kind: kindEl.value, body: body, ts: now, created: now });
     }
 
-    if (!persist(items)) return;
+    persist();
     render();
     resetForm();
     sealStamp();
@@ -1060,6 +1090,21 @@
 
   document.addEventListener("keydown", function (e) {
     if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); save(); }
+  });
+
+  /* ---------- 一次性迁移：把浏览器旧稿并入文件 ---------- */
+  document.getElementById("importOld").addEventListener("click", function () {
+    var old = hydrate(localStorage.getItem(KEY));
+    if (!old.length) { toast("浏览器里没有旧稿可导入"); return; }
+    var seen = {};
+    items.forEach(function (x) { seen[x.id] = 1; });
+    var added = 0;
+    old.forEach(function (x) {
+      if (!seen[x.id]) { items.push(x); seen[x.id] = 1; added++; }
+    });
+    persist();
+    render();
+    toast("已并入 " + added + " 篇旧稿，请下载 writings/index.json 并提交");
   });
 
   /* ---------- 落花 ---------- */
@@ -1116,7 +1161,7 @@
     else { ctx.clearRect(0, 0, cv.width, cv.height); this.textContent = "静"; toast("花落已歇"); }
   });
 
-  render();
+  fetchIndex();
 })();
 </script>
 
